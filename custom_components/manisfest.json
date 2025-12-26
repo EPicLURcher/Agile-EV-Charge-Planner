@@ -1,0 +1,9 @@
+{
+  "domain": "ev_charge_planner",
+  "name": "EV Charge Planner",
+  "version": "0.1.0",
+  "documentation": "https://github.com/EPicLURcher/Agile-EV-Charge-Planner",
+  "requirements": [],
+  "codeowners": ["@EPicLURcher"],
+  "iot_class": "local_polling"
+}
