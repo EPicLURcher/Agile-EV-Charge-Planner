@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, Optional, Dict, List
 
 from homeassistant.config_entries import ConfigEntry
@@ -16,6 +17,8 @@ from .planner.normalise import (
     merge_confirmed_over_forecast,
 )
 
+_LOGGER = logging.getLogger(__name__)
+
 
 def _safe_float(val: Any) -> Optional[float]:
     try:
@@ -27,13 +30,7 @@ def _safe_float(val: Any) -> Optional[float]:
 
 
 def _coerce_items_datetime_fields(items: list[dict]) -> list[dict]:
-    """
-    Home Assistant attributes often contain ISO strings (e.g. '2025-12-28T16:00:00Z').
-    The pure normaliser can accept strings, but we ensure they parse consistently and
-    are timezone-aware.
-
-    We convert any known datetime field present into a tz-aware datetime object.
-    """
+    """Ensure datetime fields are tz-aware datetimes."""
     out: list[dict] = []
     for item in items:
         if not isinstance(item, dict):
@@ -41,33 +38,29 @@ def _coerce_items_datetime_fields(items: list[dict]) -> list[dict]:
 
         item2 = dict(item)
 
-        # Coerce in priority order. Normaliser checks these keys too.
         for k in ("start", "date_time", "datetime", "from"):
             if k not in item2:
                 continue
+
             raw = item2.get(k)
             if raw is None:
-                continue
+                break
 
             if isinstance(raw, str):
                 dt = dt_util.parse_datetime(raw)
                 if dt is None:
-                    # try handling "Z" explicitly (dt_util.parse_datetime usually does, but safe)
                     dt = dt_util.parse_datetime(raw.replace("Z", "+00:00"))
                 if dt is None:
-                    break  # leave as-is; normaliser will skip
+                    break
                 if dt.tzinfo is None:
                     dt = dt.replace(tzinfo=dt_util.DEFAULT_TIME_ZONE)
-                dt = dt_util.as_utc(dt).astimezone(dt_util.DEFAULT_TIME_ZONE)
-                item2[k] = dt
+                item2[k] = dt_util.as_utc(dt).astimezone(dt_util.DEFAULT_TIME_ZONE)
 
             elif hasattr(raw, "tzinfo"):
-                # datetime object already (some tests or custom entities)
                 dt = raw
                 if dt.tzinfo is None:
                     dt = dt.replace(tzinfo=dt_util.DEFAULT_TIME_ZONE)
-                dt = dt_util.as_utc(dt).astimezone(dt_util.DEFAULT_TIME_ZONE)
-                item2[k] = dt
+                item2[k] = dt_util.as_utc(dt).astimezone(dt_util.DEFAULT_TIME_ZONE)
 
             break
 
@@ -77,39 +70,30 @@ def _coerce_items_datetime_fields(items: list[dict]) -> list[dict]:
 
 
 def _read_rates_from_entity(hass: HomeAssistant, entity_id: str) -> list[RateSlot]:
-    st = hass.states.get(entity_id)
-    if st is None:
+    state = hass.states.get(entity_id)
+    if state is None:
         return []
 
-    attrs = st.attributes or {}
+    attrs = state.attributes or {}
     items = extract_list_from_attributes(attrs)
     if not items:
         return []
 
     items = _coerce_items_datetime_fields(items)
-
-    # parse_rates_list expects tz-aware datetimes; will also accept strings if any remain
     return parse_rates_list(items, tz_hint=dt_util.DEFAULT_TIME_ZONE)
 
 
 def _get_injected_confirmed_rates(hass: HomeAssistant, entry_id: str) -> list[RateSlot]:
-    """
-    Optional confirmed rate injection store:
-      hass.data[DOMAIN]["confirmed_rates"][entry_id][iso] = price_p_per_kwh
-    """
     store = hass.data.get(DOMAIN, {}).get("confirmed_rates", {}).get(entry_id, {})
     out: list[RateSlot] = []
 
     for iso, price in store.items():
-        dt = dt_util.parse_datetime(iso)
-        if dt is None:
-            dt = dt_util.parse_datetime(str(iso).replace("Z", "+00:00"))
+        dt = dt_util.parse_datetime(str(iso))
         if dt is None:
             continue
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=dt_util.DEFAULT_TIME_ZONE)
         dt = dt_util.as_utc(dt).astimezone(dt_util.DEFAULT_TIME_ZONE)
-
         out.append(RateSlot(start=dt, price_p_per_kwh=float(price)))
 
     return sorted(out, key=lambda r: r.start)
@@ -117,27 +101,22 @@ def _get_injected_confirmed_rates(hass: HomeAssistant, entry_id: str) -> list[Ra
 
 def _state_bool(hass: HomeAssistant, entity_id: str) -> bool:
     st = hass.states.get(entity_id)
-    if st is None:
-        return False
-    return str(st.state).lower() in ("on", "true", "1")
+    return st is not None and str(st.state).lower() in ("on", "true", "1")
 
 
 def _state_float(hass: HomeAssistant, entity_id: str, default: float = 0.0) -> float:
     st = hass.states.get(entity_id)
     if st is None:
         return default
-    v = _safe_float(st.state)
-    return default if v is None else v
+    val = _safe_float(st.state)
+    return default if val is None else val
 
 
-def _state_datetime(hass: HomeAssistant, entity_id: str) -> Optional[dt_util.dt.datetime]:
+def _state_datetime(hass: HomeAssistant, entity_id: str):
     st = hass.states.get(entity_id)
     if st is None:
         return None
-    raw = st.state
-    dt = dt_util.parse_datetime(raw)
-    if dt is None:
-        dt = dt_util.parse_datetime(str(raw).replace("Z", "+00:00"))
+    dt = dt_util.parse_datetime(str(st.state))
     if dt is None:
         return None
     if dt.tzinfo is None:
@@ -146,15 +125,12 @@ def _state_datetime(hass: HomeAssistant, entity_id: str) -> Optional[dt_util.dt.
 
 
 class EVChargePlannerCoordinator(DataUpdateCoordinator[dict]):
-    """
-    Passive coordinator: refreshes only when manually requested (service call)
-    or when you call coordinator.async_request_refresh() from automations.
-    """
+    """Passive coordinator refreshed via service calls or automations."""
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         super().__init__(
             hass,
-            logger=None,
+            logger=_LOGGER,  # ✅ FIX: must not be None
             name=f"EV Planner {entry.title}",
             update_interval=None,
         )
@@ -162,40 +138,39 @@ class EVChargePlannerCoordinator(DataUpdateCoordinator[dict]):
         self.entry = entry
 
     async def _async_update_data(self) -> dict:
-        d = self.entry.data
+        data = self.entry.data
         now = dt_util.now()
 
-        # --- rates: 3 streams (current confirmed + next confirmed + forecast) ---
-        confirmed_current = _read_rates_from_entity(self.hass, d["confirmed_current_entity"])
-        confirmed_next = _read_rates_from_entity(self.hass, d["confirmed_next_entity"])
-        forecast = _read_rates_from_entity(self.hass, d["forecast_rates_entity"])
-
+        confirmed_current = _read_rates_from_entity(self.hass, data["confirmed_current_entity"])
+        confirmed_next = _read_rates_from_entity(self.hass, data["confirmed_next_entity"])
+        forecast = _read_rates_from_entity(self.hass, data["forecast_rates_entity"])
         injected_confirmed = _get_injected_confirmed_rates(self.hass, self.entry.entry_id)
 
         confirmed_all = confirmed_current + confirmed_next + injected_confirmed
-
-        # merged timeline is useful for debugging counts; planner still gets both lists
         merged = merge_confirmed_over_forecast(confirmed_all, forecast)
 
-        # --- vehicle inputs ---
         inputs = PlannerInputs(
             now=now,
-            current_soc_pct=_state_float(self.hass, d["current_soc_entity"], 0.0),
-            daily_usage_pct=_state_float(self.hass, d["daily_usage_entity"], 0.0),
-            battery_capacity_kwh=_state_float(self.hass, d["battery_kwh_entity"], 0.0),
-            charger_power_kw=float(d["charger_power_kw"]),
-            min_morning_soc_pct=float(d["min_morning_soc"]),
-            soc_buffer_pct=float(d["soc_buffer"]),
-            full_tomorrow_enabled=_state_bool(self.hass, d["full_tomorrow_enabled_entity"]),
-            full_tomorrow_target_soc_pct=_state_float(self.hass, d["full_tomorrow_target_entity"], 100.0),
-            deadline_enabled=_state_bool(self.hass, d["deadline_enabled_entity"]),
-            full_by=_state_datetime(self.hass, d["full_by_entity"]),
-            deadline_target_soc_pct=_state_float(self.hass, d["deadline_target_entity"], 100.0),
+            current_soc_pct=_state_float(self.hass, data["current_soc_entity"]),
+            daily_usage_pct=_state_float(self.hass, data["daily_usage_entity"]),
+            battery_capacity_kwh=_state_float(self.hass, data["battery_kwh_entity"]),
+            charger_power_kw=float(data["charger_power_kw"]),
+            min_morning_soc_pct=float(data["min_morning_soc"]),
+            soc_buffer_pct=float(data["soc_buffer"]),
+            full_tomorrow_enabled=_state_bool(self.hass, data["full_tomorrow_enabled_entity"]),
+            full_tomorrow_target_soc_pct=_state_float(
+                self.hass, data["full_tomorrow_target_entity"], 100.0
+            ),
+            deadline_enabled=_state_bool(self.hass, data["deadline_enabled_entity"]),
+            full_by=_state_datetime(self.hass, data["full_by_entity"]),
+            deadline_target_soc_pct=_state_float(
+                self.hass, data["deadline_target_entity"], 100.0
+            ),
         )
 
-        out = plan_charging(confirmed_all, forecast, inputs)
+        result = plan_charging(confirmed_all, forecast, inputs)
 
-        def _plan_dict(p):
+        def plan_dict(p):
             if p is None:
                 return None
             return {
@@ -207,14 +182,16 @@ class EVChargePlannerCoordinator(DataUpdateCoordinator[dict]):
             }
 
         return {
-            "tonight": _plan_dict(out.tonight),
-            "next_charge": _plan_dict(out.next_charge),
-            "deadline": {"status": out.deadline.status, "summary": out.deadline.summary},
+            "tonight": plan_dict(result.tonight),
+            "next_charge": plan_dict(result.next_charge),
+            "deadline": {
+                "status": result.deadline.status,
+                "summary": result.deadline.summary,
+            },
             "debug": {
                 "confirmed_current_slots": len(confirmed_current),
                 "confirmed_next_slots": len(confirmed_next),
                 "injected_confirmed_slots": len(injected_confirmed),
-                "confirmed_total_slots": len(confirmed_all),
                 "forecast_slots": len(forecast),
                 "merged_slots": len(merged),
             },
