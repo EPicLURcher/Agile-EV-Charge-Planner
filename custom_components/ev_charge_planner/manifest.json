@@ -2,7 +2,7 @@
   "domain": "ev_charge_planner",
   "name": "EV Charge Planner",
   "version": "0.1.1",
-  "documentation": "https://github.com/yourname/ev_charge_planner",
+  "documentation": "https://github.com/EPicLURcher/ev_charge_planner",
   "requirements": [],
   "codeowners": [],
   "config_flow": true,

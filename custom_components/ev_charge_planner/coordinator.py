@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Optional, List
+from typing import Any, Optional, Dict, List
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -8,8 +8,13 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
-
-from .planner.core import RateSlot, PlannerInputs, plan_charging
+from .planner.core import PlannerInputs, plan_charging
+from .planner.normalise import (
+    RateSlot,
+    extract_list_from_attributes,
+    parse_rates_list,
+    merge_confirmed_over_forecast,
+)
 
 
 def _safe_float(val: Any) -> Optional[float]:
@@ -21,51 +26,54 @@ def _safe_float(val: Any) -> Optional[float]:
         return None
 
 
-def _parse_rate_list_to_rateslots(rate_list: list[dict]) -> list[RateSlot]:
+def _coerce_items_datetime_fields(items: list[dict]) -> list[dict]:
     """
-    Supplier-agnostic-ish normaliser that supports your Octopus next_day_rates format:
-      - list key: rates
-      - item keys: start, value_inc_vat (in £/kWh)
-    Also supports common alternatives: start/date_time/from + price/value/price_p_per_kwh/p_per_kwh.
-    Returns RateSlot list in p/kWh with tz-aware datetimes.
+    Home Assistant attributes often contain ISO strings (e.g. '2025-12-28T16:00:00Z').
+    The pure normaliser can accept strings, but we ensure they parse consistently and
+    are timezone-aware.
+
+    We convert any known datetime field present into a tz-aware datetime object.
     """
-    out: list[RateSlot] = []
-    for item in rate_list:
+    out: list[dict] = []
+    for item in items:
         if not isinstance(item, dict):
             continue
 
-        raw_dt = item.get("start") or item.get("date_time") or item.get("from")
-        if raw_dt is None:
-            continue
-        dt = dt_util.parse_datetime(str(raw_dt))
-        if dt is None:
-            continue
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=dt_util.DEFAULT_TIME_ZONE)
+        item2 = dict(item)
 
-        raw_price = (
-            item.get("price_p_per_kwh")
-            or item.get("p_per_kwh")
-            or item.get("price")
-            or item.get("value")
-            or item.get("value_inc_vat")  # Octopus events
-        )
-        price = _safe_float(raw_price)
-        if price is None:
-            continue
+        # Coerce in priority order. Normaliser checks these keys too.
+        for k in ("start", "date_time", "datetime", "from"):
+            if k not in item2:
+                continue
+            raw = item2.get(k)
+            if raw is None:
+                continue
 
-        # Unit normalisation:
-        # - Octopus "value_inc_vat" is usually £/kWh e.g. 0.167055 -> 16.7055 p/kWh
-        # - If already in p/kWh it's typically > 1.0
-        if -1.0 < price < 1.0:
-            price = price * 100.0
+            if isinstance(raw, str):
+                dt = dt_util.parse_datetime(raw)
+                if dt is None:
+                    # try handling "Z" explicitly (dt_util.parse_datetime usually does, but safe)
+                    dt = dt_util.parse_datetime(raw.replace("Z", "+00:00"))
+                if dt is None:
+                    break  # leave as-is; normaliser will skip
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=dt_util.DEFAULT_TIME_ZONE)
+                dt = dt_util.as_utc(dt).astimezone(dt_util.DEFAULT_TIME_ZONE)
+                item2[k] = dt
 
-        # Normalise datetime to local tz
-        dt = dt_util.as_utc(dt).astimezone(dt_util.DEFAULT_TIME_ZONE)
+            elif hasattr(raw, "tzinfo"):
+                # datetime object already (some tests or custom entities)
+                dt = raw
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=dt_util.DEFAULT_TIME_ZONE)
+                dt = dt_util.as_utc(dt).astimezone(dt_util.DEFAULT_TIME_ZONE)
+                item2[k] = dt
 
-        out.append(RateSlot(start=dt, price_p_per_kwh=float(price)))
+            break
 
-    return sorted(out, key=lambda r: r.start)
+        out.append(item2)
+
+    return out
 
 
 def _read_rates_from_entity(hass: HomeAssistant, entity_id: str) -> list[RateSlot]:
@@ -74,34 +82,36 @@ def _read_rates_from_entity(hass: HomeAssistant, entity_id: str) -> list[RateSlo
         return []
 
     attrs = st.attributes or {}
-
-    # Common containers for list payloads
-    rate_list = None
-    for key in ("rates", "prices", "data", "slots", "items"):
-        if isinstance(attrs.get(key), list):
-            rate_list = attrs.get(key)
-            break
-
-    if not isinstance(rate_list, list):
+    items = extract_list_from_attributes(attrs)
+    if not items:
         return []
 
-    return _parse_rate_list_to_rateslots(rate_list)
+    items = _coerce_items_datetime_fields(items)
+
+    # parse_rates_list expects tz-aware datetimes; will also accept strings if any remain
+    return parse_rates_list(items, tz_hint=dt_util.DEFAULT_TIME_ZONE)
 
 
-def _get_confirmed_rates_for_entry(hass: HomeAssistant, entry_id: str) -> list[RateSlot]:
+def _get_injected_confirmed_rates(hass: HomeAssistant, entry_id: str) -> list[RateSlot]:
+    """
+    Optional confirmed rate injection store:
+      hass.data[DOMAIN]["confirmed_rates"][entry_id][iso] = price_p_per_kwh
+    """
     store = hass.data.get(DOMAIN, {}).get("confirmed_rates", {}).get(entry_id, {})
     out: list[RateSlot] = []
+
     for iso, price in store.items():
         dt = dt_util.parse_datetime(iso)
+        if dt is None:
+            dt = dt_util.parse_datetime(str(iso).replace("Z", "+00:00"))
         if dt is None:
             continue
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=dt_util.DEFAULT_TIME_ZONE)
         dt = dt_util.as_utc(dt).astimezone(dt_util.DEFAULT_TIME_ZONE)
 
-        p = float(price)
-        # assume confirmed already sent in p/kWh
-        out.append(RateSlot(start=dt, price_p_per_kwh=p))
+        out.append(RateSlot(start=dt, price_p_per_kwh=float(price)))
+
     return sorted(out, key=lambda r: r.start)
 
 
@@ -124,7 +134,10 @@ def _state_datetime(hass: HomeAssistant, entity_id: str) -> Optional[dt_util.dt.
     st = hass.states.get(entity_id)
     if st is None:
         return None
-    dt = dt_util.parse_datetime(st.state)
+    raw = st.state
+    dt = dt_util.parse_datetime(raw)
+    if dt is None:
+        dt = dt_util.parse_datetime(str(raw).replace("Z", "+00:00"))
     if dt is None:
         return None
     if dt.tzinfo is None:
@@ -133,68 +146,54 @@ def _state_datetime(hass: HomeAssistant, entity_id: str) -> Optional[dt_util.dt.
 
 
 class EVChargePlannerCoordinator(DataUpdateCoordinator[dict]):
+    """
+    Passive coordinator: refreshes only when manually requested (service call)
+    or when you call coordinator.async_request_refresh() from automations.
+    """
+
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         super().__init__(
             hass,
             logger=None,
             name=f"EV Planner {entry.title}",
-            update_interval=None,  # passive: refresh only when service is called
+            update_interval=None,
         )
         self.hass = hass
         self.entry = entry
 
     async def _async_update_data(self) -> dict:
-        data = self.entry.data
-
-        # If config flow hasn't been wired yet, return safe NO_DATA.
-        required_keys = [
-            "forecast_rates_entity",
-            "current_soc_entity",
-            "daily_usage_entity",
-            "battery_kwh_entity",
-            "full_tomorrow_enabled_entity",
-            "full_tomorrow_target_entity",
-            "deadline_enabled_entity",
-            "full_by_entity",
-            "deadline_target_entity",
-            "charger_power_kw",
-            "min_morning_soc",
-            "soc_buffer",
-        ]
-        if not all(k in data for k in required_keys):
-            return {
-                "tonight": {
-                    "state": "NO_DATA",
-                    "start": None,
-                    "end": None,
-                    "duration_hours": 0.0,
-                    "reason": "Integration not fully configured yet (config flow missing fields).",
-                },
-                "next_charge": None,
-                "deadline": {"status": "DISABLED", "summary": "Deadline mode disabled."},
-            }
-
+        d = self.entry.data
         now = dt_util.now()
 
-        confirmed = _get_confirmed_rates_for_entry(self.hass, self.entry.entry_id)
-        forecast = _read_rates_from_entity(self.hass, data["forecast_rates_entity"])
+        # --- rates: 3 streams (current confirmed + next confirmed + forecast) ---
+        confirmed_current = _read_rates_from_entity(self.hass, d["confirmed_current_entity"])
+        confirmed_next = _read_rates_from_entity(self.hass, d["confirmed_next_entity"])
+        forecast = _read_rates_from_entity(self.hass, d["forecast_rates_entity"])
 
+        injected_confirmed = _get_injected_confirmed_rates(self.hass, self.entry.entry_id)
+
+        confirmed_all = confirmed_current + confirmed_next + injected_confirmed
+
+        # merged timeline is useful for debugging counts; planner still gets both lists
+        merged = merge_confirmed_over_forecast(confirmed_all, forecast)
+
+        # --- vehicle inputs ---
         inputs = PlannerInputs(
             now=now,
-            current_soc_pct=_state_float(self.hass, data["current_soc_entity"], 0.0),
-            daily_usage_pct=_state_float(self.hass, data["daily_usage_entity"], 0.0),
-            battery_capacity_kwh=_state_float(self.hass, data["battery_kwh_entity"], 0.0),
-            charger_power_kw=float(data["charger_power_kw"]),
-            min_morning_soc_pct=float(data["min_morning_soc"]),
-            soc_buffer_pct=float(data["soc_buffer"]),
-            full_tomorrow_enabled=_state_bool(self.hass, data["full_tomorrow_enabled_entity"]),
-            full_tomorrow_target_soc_pct=_state_float(self.hass, data["full_tomorrow_target_entity"], 100.0),
-            deadline_enabled=_state_bool(self.hass, data["deadline_enabled_entity"]),
-            full_by=_state_datetime(self.hass, data["full_by_entity"]),
-            deadline_target_soc_pct=_state_float(self.hass, data["deadline_target_entity"], 100.0),
+            current_soc_pct=_state_float(self.hass, d["current_soc_entity"], 0.0),
+            daily_usage_pct=_state_float(self.hass, d["daily_usage_entity"], 0.0),
+            battery_capacity_kwh=_state_float(self.hass, d["battery_kwh_entity"], 0.0),
+            charger_power_kw=float(d["charger_power_kw"]),
+            min_morning_soc_pct=float(d["min_morning_soc"]),
+            soc_buffer_pct=float(d["soc_buffer"]),
+            full_tomorrow_enabled=_state_bool(self.hass, d["full_tomorrow_enabled_entity"]),
+            full_tomorrow_target_soc_pct=_state_float(self.hass, d["full_tomorrow_target_entity"], 100.0),
+            deadline_enabled=_state_bool(self.hass, d["deadline_enabled_entity"]),
+            full_by=_state_datetime(self.hass, d["full_by_entity"]),
+            deadline_target_soc_pct=_state_float(self.hass, d["deadline_target_entity"], 100.0),
         )
 
-        out = plan_charging(confirmed, forecast, inputs)
+        out = plan_charging(confirmed_all, forecast, inputs)
 
         def _plan_dict(p):
             if p is None:
@@ -211,4 +210,12 @@ class EVChargePlannerCoordinator(DataUpdateCoordinator[dict]):
             "tonight": _plan_dict(out.tonight),
             "next_charge": _plan_dict(out.next_charge),
             "deadline": {"status": out.deadline.status, "summary": out.deadline.summary},
+            "debug": {
+                "confirmed_current_slots": len(confirmed_current),
+                "confirmed_next_slots": len(confirmed_next),
+                "injected_confirmed_slots": len(injected_confirmed),
+                "confirmed_total_slots": len(confirmed_all),
+                "forecast_slots": len(forecast),
+                "merged_slots": len(merged),
+            },
         }
