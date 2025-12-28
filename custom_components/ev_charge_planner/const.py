@@ -2,6 +2,9 @@ DOMAIN = "ev_charge_planner"
 
 PLATFORMS = ["sensor", "switch", "number", "datetime"]
 
+SERVICE_REFRESH = "refresh"
+ATTR_RATES = "rates"
+
 # Option keys
 OPT_CHARGER_POWER_KW = "charger_power_kw"
 OPT_MIN_MORNING_SOC = "min_morning_soc"
