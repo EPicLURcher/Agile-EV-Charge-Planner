@@ -192,7 +192,7 @@ Debug slot counts are included as attributes on the tonight_plan sensor.
 
 ---
 
-## Roadmap / TODO
+## Roadmap
 
 - Add estimated cost (£) per plan
 - Add energy required (kWh) sensor
