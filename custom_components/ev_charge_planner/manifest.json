@@ -1,0 +1,10 @@
+{
+  "domain": "ev_charge_planner",
+  "name": "EV Charge Planner",
+  "version": "0.1.0",
+  "documentation": "https://github.com/yourname/ev_charge_planner",
+  "requirements": [],
+  "codeowners": [],
+  "config_flow": true,
+  "iot_class": "local_polling"
+}
