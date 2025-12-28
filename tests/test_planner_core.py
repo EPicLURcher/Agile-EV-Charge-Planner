@@ -181,3 +181,29 @@ def test_deadline_on_track_can_schedule_and_may_set_next_charge():
     assert out.deadline.status == "ON_TRACK"
     if out.tonight.state != "PLUG_IN":
         assert out.next_charge is not None
+
+def test_baseline_requires_three_hours_picks_three_hour_cheap_window():
+    now = datetime(2025, 12, 28, 18, 0, tzinfo=TZ)
+    slots = make_night_slots("2025-12-28", default_price=50.0)
+
+    # Make a 3-hour cheap window: 23:00–02:00 (6 half-hour slots)
+    cheap_start = datetime(2025, 12, 28, 23, 0, tzinfo=TZ)
+    cheap_end = datetime(2025, 12, 29, 2, 0, tzinfo=TZ)
+    slots = [
+        RateSlot(s.start, 5.0 if cheap_start <= s.start < cheap_end else s.price_p_per_kwh)
+        for s in slots
+    ]
+
+    # Force baseline required charge to be 3.0 hours:
+    # projected tomorrow = current - daily_usage
+    # with current=30 and daily_usage=10 => projected=20
+    # floor=45 => needed_soc=25% => 18.75 kWh into battery
+    # charger 7kW @ 0.9 => 6.3 kWh/hour => 18.75/6.3 = 2.976.. => ceil to 3.0h
+    inputs = base_inputs(now, current_soc_pct=30.0, daily_usage_pct=10.0)
+
+    out = plan_charging([], slots, inputs)
+
+    assert out.tonight.state == "PLUG_IN"
+    assert out.tonight.duration_hours == 3.0
+    assert out.tonight.start == cheap_start
+    assert out.tonight.end == cheap_end
