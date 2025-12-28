@@ -1,0 +1,50 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "EV Charge Planner",
+        "description": "Configure charging for one electric vehicle using confirmed day-ahead electricity rates and a longer-term forecast. Confirmed rates always override forecast prices.",
+        "data": {
+          "name": "Vehicle name",
+          "confirmed_current_entity": "Confirmed rates — current day",
+          "confirmed_next_entity": "Confirmed rates — next day",
+          "forecast_rates_entity": "Forecast rates (7-day predictor)",
+          "current_soc_entity": "Current state of vehicle charge sensor (%)",
+          "daily_usage_entity": "Daily usage (% per day)",
+          "battery_kwh_entity": "Vehicle Battery capacity (kWh)",
+          "charger_power_kw": "Charger power (kW)",
+          "min_morning_soc": "Minimum SoC tomorrow morning (%)",
+          "soc_buffer": "Safety buffer (%)",
+          "full_tomorrow_enabled_entity": "Enable “Full tomorrow” mode",
+          "full_tomorrow_target_entity": "Target SoC for “Full tomorrow” (%)",
+          "deadline_enabled_entity": "Enable “Full by date/time” mode",
+          "full_by_entity": "Full-by datetime",
+          "deadline_target_entity": "Target SoC by deadline (%)"
+        },
+        "data_description": {
+          "name": "A friendly name for this vehicle. Used to label sensors and devices.",
+          "confirmed_current_entity": "Authoritative electricity prices for today, typically provided by your energy supplier integration.",
+          "confirmed_next_entity": "Authoritative electricity prices for tomorrow, often published in the afternoon.",
+          "forecast_rates_entity": "Predicted electricity prices used only when confirmed rates are not available.",
+          "current_soc_entity": "A sensor reporting the vehicle’s current state of charge as a percentage (0–100).",
+          "daily_usage_entity": "Expected battery usage per day as a percentage. Used to estimate tomorrow morning’s SoC.",
+          "battery_kwh_entity": "Total usable battery capacity of the vehicle in kilowatt-hours.",
+          "charger_power_kw": "Maximum charging power in kilowatts (kW). Used to calculate charging duration.",
+          "min_morning_soc": "Minimum acceptable state of charge required by tomorrow morning.",
+          "soc_buffer": "Additional safety margin added on top of the minimum morning SoC.",
+          "full_tomorrow_enabled_entity": "When enabled, the planner ignores the morning floor and ensures the vehicle reaches the target SoC by tomorrow morning.",
+          "full_tomorrow_target_entity": "Target state of charge to reach by tomorrow morning when Full tomorrow mode is enabled.",
+          "deadline_enabled_entity": "When enabled, the planner attempts to reach a target state of charge by a specific future date and time.",
+          "full_by_entity": "The date and time by which the vehicle should reach the target state of charge.",
+          "deadline_target_entity": "Target state of charge to reach by the specified deadline."
+        }
+      }
+    },
+    "error": {
+      "unknown": "Unexpected error occurred"
+    },
+    "abort": {
+      "already_configured": "This vehicle is already configured"
+    }
+  }
+}
