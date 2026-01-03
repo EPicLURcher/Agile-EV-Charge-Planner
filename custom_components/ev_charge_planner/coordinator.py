@@ -183,6 +183,14 @@ class EVChargePlannerCoordinator(DataUpdateCoordinator[dict]):
 
         result = plan_charging(confirmed_all, forecast, inputs)
 
+        def _metrics_dict(m):
+            return {
+                "needed_soc_pct": m.needed_soc_pct,
+                "needed_energy_kwh": m.needed_energy_kwh,
+                "needed_hours": m.needed_hours,
+                "needed_slots": m.needed_slots,
+            }
+
         def _plan_dict(p):
             if p is None:
                 return None
@@ -201,6 +209,7 @@ class EVChargePlannerCoordinator(DataUpdateCoordinator[dict]):
                 "status": result.deadline.status,
                 "summary": result.deadline.summary,
             },
+            "metrics": _metrics_dict(result.metrics),
             "debug": {
                 "confirmed_current_slots": len(confirmed_current),
                 "confirmed_next_slots": len(confirmed_next),
