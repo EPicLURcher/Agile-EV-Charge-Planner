@@ -163,10 +163,7 @@ def _needed_energy_kwh(inputs: PlannerInputs, needed_soc_pct: float) -> float:
 
 
 def _slots_needed_for_energy(inputs: PlannerInputs, energy_kwh: float) -> int:
-    if inputs.charger_power_kw <= 0:
-        return 0
-    wall_kwh = energy_kwh / DEFAULT_CHARGING_EFFICIENCY
-    hours = wall_kwh / inputs.charger_power_kw
+    hours = hours = _hours_needed_for_energy(inputs, energy_kwh)
     return _ceil_slots(hours, 0.5)
 
 def _hours_needed_for_energy(inputs: PlannerInputs, energy_kwh: float, efficiency: float = DEFAULT_CHARGING_EFFICIENCY) -> float:
