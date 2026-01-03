@@ -57,6 +57,7 @@ class ChargeMetrics:
     needed_energy_kwh: float
     needed_hours: float
     needed_slots: int
+    effective_target_soc_pct: float
 
 @dataclass(frozen=True)
 class PlannerOutputs:
@@ -161,7 +162,7 @@ def _needed_energy_kwh(inputs: PlannerInputs, needed_soc_pct: float) -> float:
 
 
 def _slots_needed_for_energy(inputs: PlannerInputs, energy_kwh: float) -> int:
-    hours = hours = _hours_needed_for_energy(inputs, energy_kwh)
+    hours = _hours_needed_for_energy(inputs, energy_kwh)
     return _ceil_slots(hours, 0.5)
 
 def _hours_needed_for_energy(inputs: PlannerInputs, energy_kwh: float, efficiency: float = DEFAULT_CHARGING_EFFICIENCY) -> float:
@@ -193,6 +194,8 @@ def plan_charging(
         raise ValueError("inputs.full_by must be timezone-aware")
 
     needed_soc = _needed_charge_soc_pct_for_tomorrow(inputs)
+    floor = inputs.min_morning_soc_pct + inputs.soc_buffer_pct
+    effective_target = max(floor, inputs.target_soc_pct)
     needed_kwh = _needed_energy_kwh(inputs, needed_soc)
     needed_slots = _slots_needed_for_energy(inputs, needed_kwh)
     needed_hours = _hours_needed_for_energy(inputs, needed_kwh)
@@ -202,6 +205,7 @@ def plan_charging(
         needed_energy_kwh=needed_kwh,
         needed_hours=needed_hours,
         needed_slots=needed_slots,
+        effective_target_soc_pct=effective_target,
     )
     horizon_nights = 7
     windows = _build_night_windows(inputs.now, horizon_nights)

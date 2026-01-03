@@ -158,22 +158,17 @@ class EVChargePlannerCoordinator(DataUpdateCoordinator[dict]):
         confirmed_next = _read_rates_from_entity(self.hass, data["confirmed_next_entity"])
         forecast = _read_rates_from_entity(self.hass, data["forecast_rates_entity"])
         injected_confirmed = _get_injected_confirmed_rates(self.hass, self.entry.entry_id)
-        full_by = _parse_iso_dt(_opt(self.entry, OPT_FULL_BY))
-        deadline_enabled = bool(_opt(self.entry, OPT_DEADLINE_ENABLED)) and full_by is not None
 
         confirmed_all = confirmed_current + confirmed_next + injected_confirmed
         merged = merge_confirmed_over_forecast(confirmed_all, forecast)
-        target_soc = float(
-            _opt(
-                self.entry,
-                OPT_TARGET_SOC,
-                _opt(self.entry, OPT_DEADLINE_TARGET, _opt(self.entry, OPT_TARGET_SOC)),
-            )
-        )
 
-        # Hybrid inputs:
-        # - SoC comes from external sensor selected in config flow
-        # - Everything else comes from entry.options (and is backed by integration entities / options flow)
+        # Deadline wiring: only "enabled" if toggle is on AND full_by is set
+        full_by = _parse_iso_dt(_opt(self.entry, OPT_FULL_BY))
+        deadline_enabled = bool(_opt(self.entry, OPT_DEADLINE_ENABLED)) and full_by is not None
+
+        # Unified target slider
+        target_soc = float(_opt(self.entry, OPT_TARGET_SOC))
+
         inputs = PlannerInputs(
             now=now,
             current_soc_pct=_state_float(self.hass, data["current_soc_entity"]),
@@ -183,7 +178,7 @@ class EVChargePlannerCoordinator(DataUpdateCoordinator[dict]):
             min_morning_soc_pct=float(_opt(self.entry, OPT_MIN_MORNING_SOC)),
             soc_buffer_pct=float(_opt(self.entry, OPT_SOC_BUFFER)),
             target_soc_pct=target_soc,
-            deadline_enabled=bool(_opt(self.entry, OPT_DEADLINE_ENABLED)),
+            deadline_enabled=deadline_enabled,
             full_by=full_by,
             deadline_target_soc_pct=float(_opt(self.entry, OPT_DEADLINE_TARGET)),
         )
@@ -196,6 +191,7 @@ class EVChargePlannerCoordinator(DataUpdateCoordinator[dict]):
                 "needed_energy_kwh": m.needed_energy_kwh,
                 "needed_hours": m.needed_hours,
                 "needed_slots": m.needed_slots,
+                "effective_target_soc_pct": m.effective_target_soc_pct,
             }
 
         def _plan_dict(p):
@@ -224,5 +220,7 @@ class EVChargePlannerCoordinator(DataUpdateCoordinator[dict]):
                 "forecast_slots": len(forecast),
                 "merged_slots": len(merged),
                 "target_soc_pct": target_soc,
+                "deadline_enabled_effective": deadline_enabled,
+                "full_by": full_by.isoformat() if full_by else None,
             },
         }
