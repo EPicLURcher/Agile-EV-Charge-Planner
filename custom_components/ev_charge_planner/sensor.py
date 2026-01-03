@@ -9,7 +9,11 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import DOMAIN
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities) -> None:
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    async_add_entities,
+) -> None:
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
 
     async_add_entities(
@@ -20,6 +24,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             NextChargeSensor(coordinator, entry),
             DeadlineStatusSensor(coordinator, entry),
             DeadlineSummarySensor(coordinator, entry),
+            ChargeToAddPctSensor(coordinator, entry),
+            ChargeHoursRequiredSensor(coordinator, entry),
         ]
     )
 
@@ -59,7 +65,7 @@ class TonightStateSensor(_BasePlannerSensor):
             "end": t.get("end"),
             "duration_hours": t.get("duration_hours"),
             "reason": t.get("reason"),
-            "debug_confirmed_slots": dbg.get("confirmed_slots"),
+            "debug_confirmed_slots": dbg.get("confirmed_current_slots"),
             "debug_forecast_slots": dbg.get("forecast_slots"),
             "debug_merged_slots": dbg.get("merged_slots"),
         }
@@ -132,3 +138,49 @@ class DeadlineSummarySensor(_BasePlannerSensor):
     def native_value(self):
         d = (self.coordinator.data or {}).get("deadline") or {}
         return d.get("summary")
+
+
+class ChargeToAddPctSensor(_BasePlannerSensor):
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "charge_to_add_pct", "Charge to add (%)")
+        self._attr_unit_of_measurement = "%"
+
+    @property
+    def native_value(self):
+        m = (self.coordinator.data or {}).get("metrics") or {}
+        v = m.get("needed_soc_pct")
+        if v is None:
+            return None
+        return round(float(v), 1)
+
+    @property
+    def extra_state_attributes(self):
+        m = (self.coordinator.data or {}).get("metrics") or {}
+        return {
+            "needed_energy_kwh": m.get("needed_energy_kwh"),
+            "needed_hours": m.get("needed_hours"),
+            "needed_slots": m.get("needed_slots"),
+        }
+
+
+class ChargeHoursRequiredSensor(_BasePlannerSensor):
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "charge_hours_required", "Charge hours required")
+        self._attr_unit_of_measurement = "h"
+
+    @property
+    def native_value(self):
+        m = (self.coordinator.data or {}).get("metrics") or {}
+        v = m.get("needed_hours")
+        if v is None:
+            return None
+        return round(float(v), 2)
+
+    @property
+    def extra_state_attributes(self):
+        m = (self.coordinator.data or {}).get("metrics") or {}
+        return {
+            "needed_soc_pct": m.get("needed_soc_pct"),
+            "needed_energy_kwh": m.get("needed_energy_kwh"),
+            "needed_slots": m.get("needed_slots"),
+        }
