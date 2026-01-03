@@ -30,7 +30,6 @@ class PlannerInputs:
     soc_buffer_pct: float
 
     # Overrides
-    full_tomorrow_enabled: bool
     full_tomorrow_target_soc_pct: float
 
     deadline_enabled: bool

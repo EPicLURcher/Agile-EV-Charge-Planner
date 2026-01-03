@@ -9,14 +9,12 @@ from .const import (
     DOMAIN,
     DEFAULTS,
     OPT_DEADLINE_ENABLED,
-    OPT_FULL_TOMORROW_ENABLED,
 )
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities):
     async_add_entities(
         [
-            _OptionSwitch(entry, OPT_FULL_TOMORROW_ENABLED, "Full tomorrow"),
             _OptionSwitch(entry, OPT_DEADLINE_ENABLED, "Full by date/time"),
         ]
     )
