@@ -143,9 +143,8 @@ def _energy_kwh_from_soc_pct(battery_kwh: float, soc_pct: float) -> float:
 
 def _required_soc_for_tomorrow(inputs: PlannerInputs) -> float:
     floor = inputs.min_morning_soc_pct + inputs.soc_buffer_pct
-    if inputs.full_tomorrow_enabled:
-        return inputs.full_tomorrow_target_soc_pct
-    return floor
+    target = inputs.full_tomorrow_target_soc_pct
+    return max(floor, target)
 
 
 def _projected_soc_tomorrow_morning(inputs: PlannerInputs) -> float:
