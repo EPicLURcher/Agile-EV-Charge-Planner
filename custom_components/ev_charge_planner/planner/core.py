@@ -57,6 +57,14 @@ class PlannerOutputs:
     tonight: TonightPlan
     next_charge: Optional[TonightPlan]
     deadline: DeadlineStatus
+    metrics: ChargeMetrics
+
+@dataclass(frozen=True)
+class ChargeMetrics:
+    needed_soc_pct: float          # % to add
+    needed_energy_kwh: float
+    needed_hours: float
+    needed_slots: int
 
 
 def _is_tz_aware(dt: datetime) -> bool:
@@ -161,6 +169,12 @@ def _slots_needed_for_energy(inputs: PlannerInputs, energy_kwh: float) -> int:
     wall_kwh = energy_kwh / 0.90
     hours = wall_kwh / inputs.charger_power_kw
     return _ceil_slots(hours, 0.5)
+
+def _hours_needed_for_energy(inputs: PlannerInputs, energy_kwh: float, efficiency: float = 0.90) -> float:
+    if inputs.charger_power_kw <= 0:
+        return 0.0
+    wall_kwh = energy_kwh / efficiency
+    return wall_kwh / inputs.charger_power_kw
 
 
 def _build_night_windows(now: datetime, days: int) -> List[Tuple[datetime, datetime, datetime]]:
