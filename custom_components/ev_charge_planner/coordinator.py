@@ -181,7 +181,7 @@ class EVChargePlannerCoordinator(DataUpdateCoordinator[dict]):
             charger_power_kw=float(_opt(self.entry, OPT_CHARGER_POWER_KW)),
             min_morning_soc_pct=float(_opt(self.entry, OPT_MIN_MORNING_SOC)),
             soc_buffer_pct=float(_opt(self.entry, OPT_SOC_BUFFER)),
-            full_tomorrow_target_soc_pct=target_soc,
+            target_soc_pct=target_soc,
             deadline_enabled=bool(_opt(self.entry, OPT_DEADLINE_ENABLED)),
             full_by=_parse_iso_dt(_opt(self.entry, OPT_FULL_BY)),
             deadline_target_soc_pct=target_soc,

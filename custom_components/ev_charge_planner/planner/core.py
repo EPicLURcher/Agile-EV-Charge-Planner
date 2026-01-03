@@ -30,7 +30,7 @@ class PlannerInputs:
     soc_buffer_pct: float
 
     # Overrides
-    full_tomorrow_target_soc_pct: float
+    target_soc_pct: float
 
     deadline_enabled: bool
     full_by: Optional[datetime]  # timezone-aware if provided
@@ -142,7 +142,7 @@ def _energy_kwh_from_soc_pct(battery_kwh: float, soc_pct: float) -> float:
 
 def _required_soc_for_tomorrow(inputs: PlannerInputs) -> float:
     floor = inputs.min_morning_soc_pct + inputs.soc_buffer_pct
-    target = inputs.full_tomorrow_target_soc_pct
+    target = inputs.target_soc_pct
     return max(floor, target)
 
 

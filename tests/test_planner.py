@@ -32,7 +32,7 @@ def base_inputs(now: datetime, **overrides) -> PlannerInputs:
     Defaults chosen to keep tests deterministic and avoid rounding ambiguity.
 
     IMPORTANT:
-    - full_tomorrow_target_soc_pct is now treated as the unified "Target SoC slider".
+    - target_soc_pct is now treated as the unified "Target SoC slider".
     - deadline_target_soc_pct still exists, and deadline tests may override it.
     """
     defaults = dict(
@@ -44,7 +44,7 @@ def base_inputs(now: datetime, **overrides) -> PlannerInputs:
         min_morning_soc_pct=45.0,
         soc_buffer_pct=5.0,
         # Unified target used for tomorrow planning (clamped to floor)
-        full_tomorrow_target_soc_pct=50.0,
+        target_soc_pct=50.0,
         # Deadline mode
         deadline_enabled=False,
         full_by=None,
@@ -103,7 +103,7 @@ def test_planner_does_not_bridge_gaps_in_rate_slots():
         battery_capacity_kwh=70.0,
         charger_power_kw=7.0,
         # target 50, floor 50 => deficit > 0
-        full_tomorrow_target_soc_pct=50.0,
+        target_soc_pct=50.0,
     )
 
     out = plan_charging([], slots, inputs)
@@ -140,7 +140,7 @@ def test_baseline_no_need_when_above_floor_and_not_opportunistic():
         daily_usage_pct=10.0,
         min_morning_soc_pct=45.0,
         soc_buffer_pct=5.0,
-        full_tomorrow_target_soc_pct=50.0,
+        target_soc_pct=50.0,
     )
 
     out = plan_charging([], slots, inputs)
@@ -176,7 +176,7 @@ def test_baseline_requires_charge_picks_cheapest_block_exact_2h():
         soc_buffer_pct=5.0,
         battery_capacity_kwh=70.0,
         charger_power_kw=7.0,
-        full_tomorrow_target_soc_pct=50.0,
+        target_soc_pct=50.0,
     )
 
     out = plan_charging([], slots, inputs)
@@ -189,7 +189,7 @@ def test_baseline_requires_charge_picks_cheapest_block_exact_2h():
 def test_full_tomorrow_override_targets_soc():
     """
     This test used to validate the "full tomorrow toggle".
-    Now, it validates that the unified target SoC (full_tomorrow_target_soc_pct)
+    Now, it validates that the unified target SoC (target_soc_pct)
     drives the required SoC for tomorrow (clamped to floor).
     """
     now = datetime(2025, 12, 28, 18, 0, tzinfo=TZ)
@@ -199,7 +199,7 @@ def test_full_tomorrow_override_targets_soc():
         now,
         current_soc_pct=20.0,
         daily_usage_pct=10.0,              # projected = 10
-        full_tomorrow_target_soc_pct=80.0,  # unified target
+        target_soc_pct=80.0,  # unified target
         min_morning_soc_pct=45.0,
         soc_buffer_pct=5.0,                # floor = 50, so required = 80
     )
@@ -231,7 +231,7 @@ def test_opportunistic_charges_one_hour_if_tonight_cheapest_across_week():
         now,
         current_soc_pct=80.0,
         daily_usage_pct=10.0,              # projected 70
-        full_tomorrow_target_soc_pct=50.0,  # required tomorrow target = 50; projected >= 50 => no required charge
+        target_soc_pct=50.0,  # required tomorrow target = 50; projected >= 50 => no required charge
     )
 
     out = plan_charging([], all_slots, inputs)
