@@ -18,6 +18,7 @@ OPT_FULL_TOMORROW_TARGET = "full_tomorrow_target_soc"
 OPT_DEADLINE_ENABLED = "deadline_enabled"
 OPT_FULL_BY = "full_by"  # ISO string
 OPT_DEADLINE_TARGET = "deadline_target_soc"
+OPT_TARGET_SOC = "target_soc"
 
 DEFAULT_CHARGING_EFFICIENCY = 0.90
 
@@ -32,4 +33,5 @@ DEFAULTS = {
     OPT_DEADLINE_ENABLED: False,
     OPT_FULL_BY: None,
     OPT_DEADLINE_TARGET: 90.0,
+    OPT_TARGET_SOC: 90,
 }
