@@ -9,6 +9,7 @@ from .const import (
     OPT_CHARGER_POWER_KW,
     OPT_MIN_MORNING_SOC,
     OPT_SOC_BUFFER,
+    OPT_TARGET_SOC,
 )
 
 
@@ -33,6 +34,12 @@ class EVChargePlannerOptionsFlowHandler(config_entries.OptionsFlow):
                     OPT_BATTERY_KWH,
                     default=opts.get(OPT_BATTERY_KWH, DEFAULTS[OPT_BATTERY_KWH]),
                 ): vol.Coerce(float),
+
+                vol.Required(
+                    OPT_TARGET_SOC,
+                    default=opts.get(OPT_TARGET_SOC, DEFAULTS[OPT_TARGET_SOC]),
+                ): vol.All(vol.Coerce(float), vol.Range(min=0, max=100)),
+
                 vol.Required(
                     OPT_MIN_MORNING_SOC,
                     default=opts.get(OPT_MIN_MORNING_SOC, DEFAULTS[OPT_MIN_MORNING_SOC]),
