@@ -16,7 +16,6 @@ from .const import (
     OPT_MIN_MORNING_SOC,
     OPT_SOC_BUFFER,
     OPT_DAILY_USAGE_PCT,
-    OPT_FULL_TOMORROW_TARGET,
     OPT_DEADLINE_ENABLED,
     OPT_FULL_BY,
     OPT_DEADLINE_TARGET,
@@ -159,6 +158,8 @@ class EVChargePlannerCoordinator(DataUpdateCoordinator[dict]):
         confirmed_next = _read_rates_from_entity(self.hass, data["confirmed_next_entity"])
         forecast = _read_rates_from_entity(self.hass, data["forecast_rates_entity"])
         injected_confirmed = _get_injected_confirmed_rates(self.hass, self.entry.entry_id)
+        full_by = _parse_iso_dt(_opt(self.entry, OPT_FULL_BY))
+        deadline_enabled = bool(_opt(self.entry, OPT_DEADLINE_ENABLED)) and full_by is not None
 
         confirmed_all = confirmed_current + confirmed_next + injected_confirmed
         merged = merge_confirmed_over_forecast(confirmed_all, forecast)
@@ -166,7 +167,7 @@ class EVChargePlannerCoordinator(DataUpdateCoordinator[dict]):
             _opt(
                 self.entry,
                 OPT_TARGET_SOC,
-                _opt(self.entry, OPT_DEADLINE_TARGET, _opt(self.entry, OPT_FULL_TOMORROW_TARGET)),
+                _opt(self.entry, OPT_DEADLINE_TARGET, _opt(self.entry, OPT_TARGET_SOC)),
             )
         )
 
@@ -183,8 +184,8 @@ class EVChargePlannerCoordinator(DataUpdateCoordinator[dict]):
             soc_buffer_pct=float(_opt(self.entry, OPT_SOC_BUFFER)),
             target_soc_pct=target_soc,
             deadline_enabled=bool(_opt(self.entry, OPT_DEADLINE_ENABLED)),
-            full_by=_parse_iso_dt(_opt(self.entry, OPT_FULL_BY)),
-            deadline_target_soc_pct=target_soc,
+            full_by=full_by,
+            deadline_target_soc_pct=float(_opt(self.entry, OPT_DEADLINE_TARGET)),
         )
 
         result = plan_charging(confirmed_all, forecast, inputs)

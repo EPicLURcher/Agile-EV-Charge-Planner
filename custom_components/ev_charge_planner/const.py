@@ -13,7 +13,6 @@ OPT_BATTERY_KWH = "battery_kwh"
 
 # Dynamic (entity-backed) option keys
 OPT_DAILY_USAGE_PCT = "daily_usage_pct"
-OPT_FULL_TOMORROW_TARGET = "full_tomorrow_target_soc"
 OPT_DEADLINE_ENABLED = "deadline_enabled"
 OPT_FULL_BY = "full_by"  # ISO string
 OPT_DEADLINE_TARGET = "deadline_target_soc"
@@ -27,7 +26,6 @@ DEFAULTS = {
     OPT_SOC_BUFFER: 5.0,
     OPT_BATTERY_KWH: 75.0,
     OPT_DAILY_USAGE_PCT: 10.0,
-    OPT_FULL_TOMORROW_TARGET: 90.0,
     OPT_DEADLINE_ENABLED: False,
     OPT_FULL_BY: None,
     OPT_DEADLINE_TARGET: 90.0,
