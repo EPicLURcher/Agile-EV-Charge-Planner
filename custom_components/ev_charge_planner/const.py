@@ -19,6 +19,8 @@ OPT_DEADLINE_ENABLED = "deadline_enabled"
 OPT_FULL_BY = "full_by"  # ISO string
 OPT_DEADLINE_TARGET = "deadline_target_soc"
 
+DEFAULT_CHARGING_EFFICIENCY = 0.90
+
 DEFAULTS = {
     OPT_CHARGER_POWER_KW: 7.0,
     OPT_MIN_MORNING_SOC: 40.0,

@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, time
 from typing import Iterable, List, Optional, Dict, Tuple
+from ..const import DEFAULT_CHARGING_EFFICIENCY
 
 
 @dataclass(frozen=True)
@@ -51,14 +52,6 @@ class DeadlineStatus:
     status: str  # ON_TRACK | AT_RISK | DISABLED
     summary: str
 
-
-@dataclass(frozen=True)
-class PlannerOutputs:
-    tonight: TonightPlan
-    next_charge: Optional[TonightPlan]
-    deadline: DeadlineStatus
-    metrics: ChargeMetrics
-
 @dataclass(frozen=True)
 class ChargeMetrics:
     needed_soc_pct: float          # % to add
@@ -66,6 +59,12 @@ class ChargeMetrics:
     needed_hours: float
     needed_slots: int
 
+@dataclass(frozen=True)
+class PlannerOutputs:
+    tonight: TonightPlan
+    next_charge: Optional[TonightPlan]
+    deadline: DeadlineStatus
+    metrics: ChargeMetrics
 
 def _is_tz_aware(dt: datetime) -> bool:
     return dt.tzinfo is not None and dt.utcoffset() is not None
@@ -166,11 +165,11 @@ def _needed_energy_kwh(inputs: PlannerInputs, needed_soc_pct: float) -> float:
 def _slots_needed_for_energy(inputs: PlannerInputs, energy_kwh: float) -> int:
     if inputs.charger_power_kw <= 0:
         return 0
-    wall_kwh = energy_kwh / 0.90
+    wall_kwh = energy_kwh / DEFAULT_CHARGING_EFFICIENCY
     hours = wall_kwh / inputs.charger_power_kw
     return _ceil_slots(hours, 0.5)
 
-def _hours_needed_for_energy(inputs: PlannerInputs, energy_kwh: float, efficiency: float = 0.90) -> float:
+def _hours_needed_for_energy(inputs: PlannerInputs, energy_kwh: float, efficiency: float = DEFAULT_CHARGING_EFFICIENCY) -> float:
     if inputs.charger_power_kw <= 0:
         return 0.0
     wall_kwh = energy_kwh / efficiency
@@ -198,6 +197,17 @@ def plan_charging(
     if inputs.full_by is not None and not _is_tz_aware(inputs.full_by):
         raise ValueError("inputs.full_by must be timezone-aware")
 
+    needed_soc = _needed_charge_soc_pct_for_tomorrow(inputs)
+    needed_kwh = _needed_energy_kwh(inputs, needed_soc)
+    needed_slots = _slots_needed_for_energy(inputs, needed_kwh)
+    needed_hours = _hours_needed_for_energy(inputs, needed_kwh)
+
+    metrics = ChargeMetrics(
+        needed_soc_pct=needed_soc,
+        needed_energy_kwh=needed_kwh,
+        needed_hours=needed_hours,
+        needed_slots=needed_slots,
+    )
     horizon_nights = 7
     windows = _build_night_windows(inputs.now, horizon_nights)
 
@@ -212,7 +222,8 @@ def plan_charging(
         return PlannerOutputs(
             tonight=tonight,
             next_charge=None,
-            deadline=DeadlineStatus(status="DISABLED", summary="Deadline mode disabled.")
+            deadline=DeadlineStatus(status="DISABLED", summary="Deadline mode disabled."),
+            metrics=metrics
         )
 
     night_slots: Dict[datetime, List[RateSlot]] = {}
@@ -317,9 +328,9 @@ def plan_charging(
             reason="Deadline mode: charging scheduled tonight as part of full-by plan.",
         )
     else:
-        needed_soc = _needed_charge_soc_pct_for_tomorrow(inputs)
-        needed_kwh = _needed_energy_kwh(inputs, needed_soc)
-        needed_slots = _slots_needed_for_energy(inputs, needed_kwh)
+        needed_soc = metrics.needed_soc_pct
+        needed_kwh = metrics.needed_energy_kwh
+        needed_slots = metrics.needed_slots
 
         if not tonight_slots:
             tonight = TonightPlan(
@@ -396,4 +407,4 @@ def plan_charging(
                 reason="Next scheduled charge from deadline plan.",
             )
 
-    return PlannerOutputs(tonight=tonight, next_charge=next_charge, deadline=deadline_status)
+    return PlannerOutputs(tonight=tonight, next_charge=next_charge, deadline=deadline_status, metrics=metrics)
