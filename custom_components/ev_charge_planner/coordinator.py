@@ -163,7 +163,13 @@ class EVChargePlannerCoordinator(DataUpdateCoordinator[dict]):
 
         confirmed_all = confirmed_current + confirmed_next + injected_confirmed
         merged = merge_confirmed_over_forecast(confirmed_all, forecast)
-        target_soc = float(_opt(self.entry, OPT_TARGET_SOC))
+        target_soc = float(
+            _opt(
+                self.entry,
+                OPT_TARGET_SOC,
+                _opt(self.entry, OPT_DEADLINE_TARGET, _opt(self.entry, OPT_FULL_TOMORROW_TARGET)),
+            )
+        )
 
         # Hybrid inputs:
         # - SoC comes from external sensor selected in config flow
@@ -177,10 +183,10 @@ class EVChargePlannerCoordinator(DataUpdateCoordinator[dict]):
             min_morning_soc_pct=float(_opt(self.entry, OPT_MIN_MORNING_SOC)),
             soc_buffer_pct=float(_opt(self.entry, OPT_SOC_BUFFER)),
             full_tomorrow_enabled=bool(_opt(self.entry, OPT_FULL_TOMORROW_ENABLED)),
-            full_tomorrow_target_soc_pct=float(_opt(self.entry, OPT_FULL_TOMORROW_TARGET)),
+            full_tomorrow_target_soc_pct=target_soc,
             deadline_enabled=bool(_opt(self.entry, OPT_DEADLINE_ENABLED)),
             full_by=_parse_iso_dt(_opt(self.entry, OPT_FULL_BY)),
-            deadline_target_soc_pct=float(_opt(self.entry, OPT_DEADLINE_TARGET)),
+            deadline_target_soc_pct=target_soc,
         )
 
         result = plan_charging(confirmed_all, forecast, inputs)
