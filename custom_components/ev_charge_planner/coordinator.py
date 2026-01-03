@@ -21,6 +21,7 @@ from .const import (
     OPT_DEADLINE_ENABLED,
     OPT_FULL_BY,
     OPT_DEADLINE_TARGET,
+    OPT_TARGET_SOC,
 )
 from .planner.core import PlannerInputs, plan_charging
 from .planner.normalise import (
@@ -162,6 +163,7 @@ class EVChargePlannerCoordinator(DataUpdateCoordinator[dict]):
 
         confirmed_all = confirmed_current + confirmed_next + injected_confirmed
         merged = merge_confirmed_over_forecast(confirmed_all, forecast)
+        target_soc = float(_opt(self.entry, OPT_TARGET_SOC))
 
         # Hybrid inputs:
         # - SoC comes from external sensor selected in config flow
@@ -216,5 +218,6 @@ class EVChargePlannerCoordinator(DataUpdateCoordinator[dict]):
                 "injected_confirmed_slots": len(injected_confirmed),
                 "forecast_slots": len(forecast),
                 "merged_slots": len(merged),
+                "target_soc_pct": target_soc,
             },
         }
