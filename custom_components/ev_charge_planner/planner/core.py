@@ -1,6 +1,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta, time
 from typing import Iterable, List, Optional, Dict, Tuple
@@ -169,8 +170,8 @@ def _hours_needed_for_energy(inputs: PlannerInputs, energy_kwh: float, efficienc
     if inputs.charger_power_kw <= 0:
         return 0.0
     wall_kwh = energy_kwh / efficiency
-    return wall_kwh / inputs.charger_power_kw
-
+    raw_hours = wall_kwh / inputs.charger_power_kw
+    return math.ceil(raw_hours * 2) / 2
 
 def _build_night_windows(now: datetime, days: int) -> List[Tuple[datetime, datetime, datetime]]:
     windows: List[Tuple[datetime, datetime, datetime]] = []
