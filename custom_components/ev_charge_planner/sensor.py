@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from homeassistant.components.sensor import SensorEntity
+from homeassistant.components.sensor import SensorEntity, SensorDeviceClass, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
@@ -26,6 +26,7 @@ async def async_setup_entry(
             DeadlineSummarySensor(coordinator, entry),
             ChargeToAddPctSensor(coordinator, entry),
             ChargeHoursRequiredSensor(coordinator, entry),
+            TonightEstimatedCostSensor(coordinator, entry),
         ]
     )
 
@@ -65,9 +66,12 @@ class TonightStateSensor(_BasePlannerSensor):
             "end": t.get("end"),
             "duration_hours": t.get("duration_hours"),
             "reason": t.get("reason"),
-            "debug_confirmed_slots": dbg.get("confirmed_current_slots"),
+            "debug_confirmed_current_slots": dbg.get("confirmed_current_slots"),
+            "debug_confirmed_next_slots": dbg.get("confirmed_next_slots"),
+            "debug_injected_confirmed_slots": dbg.get("injected_confirmed_slots"),
             "debug_forecast_slots": dbg.get("forecast_slots"),
             "debug_merged_slots": dbg.get("merged_slots"),
+            "debug_target_soc_pct": dbg.get("target_soc_pct"),
         }
 
 
@@ -143,7 +147,8 @@ class DeadlineSummarySensor(_BasePlannerSensor):
 class ChargeToAddPctSensor(_BasePlannerSensor):
     def __init__(self, coordinator, entry):
         super().__init__(coordinator, entry, "charge_to_add_pct", "Charge to add (%)")
-        self._attr_unit_of_measurement = "%"
+        self._attr_native_unit_of_measurement = "%"
+        self._attr_state_class = SensorStateClass.MEASUREMENT
 
     @property
     def native_value(self):
@@ -160,13 +165,15 @@ class ChargeToAddPctSensor(_BasePlannerSensor):
             "needed_energy_kwh": m.get("needed_energy_kwh"),
             "needed_hours": m.get("needed_hours"),
             "needed_slots": m.get("needed_slots"),
+            "effective_target_soc_pct": m.get("effective_target_soc_pct"),
         }
 
 
 class ChargeHoursRequiredSensor(_BasePlannerSensor):
     def __init__(self, coordinator, entry):
         super().__init__(coordinator, entry, "charge_hours_required", "Charge hours required")
-        self._attr_unit_of_measurement = "h"
+        self._attr_native_unit_of_measurement = "h"
+        self._attr_state_class = SensorStateClass.MEASUREMENT
 
     @property
     def native_value(self):
@@ -183,4 +190,40 @@ class ChargeHoursRequiredSensor(_BasePlannerSensor):
             "needed_soc_pct": m.get("needed_soc_pct"),
             "needed_energy_kwh": m.get("needed_energy_kwh"),
             "needed_slots": m.get("needed_slots"),
+            "effective_target_soc_pct": m.get("effective_target_soc_pct"),
+        }
+
+
+class TonightEstimatedCostSensor(_BasePlannerSensor):
+    """Estimated total cost for tonight's chosen charging window (if any).
+
+    Assumes planner metric `tonight_estimated_cost` is in *pence* (because rates are p/kWh).
+    Exposes value as GBP for nicer HA handling.
+    """
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "tonight_estimated_cost", "Tonight estimated cost")
+        self._attr_device_class = SensorDeviceClass.MONETARY
+        self._attr_state_class = SensorStateClass.MEASUREMENT
+        self._attr_native_unit_of_measurement = "GBP"
+        self._attr_icon = "mdi:cash"
+
+    @property
+    def native_value(self):
+        m = (self.coordinator.data or {}).get("metrics") or {}
+        v_pence = m.get("tonight_estimated_cost")
+        if v_pence is None:
+            return None
+        return round(float(v_pence) / 100.0, 2)
+
+    @property
+    def extra_state_attributes(self):
+        t = (self.coordinator.data or {}).get("tonight") or {}
+        m = (self.coordinator.data or {}).get("metrics") or {}
+        return {
+            "tonight_state": t.get("state"),
+            "start": t.get("start"),
+            "end": t.get("end"),
+            "planned_slots": m.get("tonight_planned_slots"),
+            "estimated_cost_pence": m.get("tonight_estimated_cost"),
         }

@@ -5,7 +5,7 @@ from typing import List, Optional
 
 import pytest
 
-from custom_components.ev_charge_planner.planner.core import PlannerInputs, plan_charging, RateSlot
+from custom_components.ev_charge_planner.planner.core import PlannerInputs, plan_charging, RateSlot, _estimate_cost_for_window
 from custom_components.ev_charge_planner.planner.normalise import (
     merge_confirmed_over_forecast,
     parse_rates_list,
@@ -280,3 +280,125 @@ def test_deadline_on_track_can_schedule_and_sets_status():
     out = plan_charging([], slots, inputs)
     assert out.deadline.status in ("ON_TRACK", "AT_RISK")
     assert "Full by" in out.deadline.summary
+
+def test_estimate_cost_for_window_happy_path():
+    start = datetime(2025, 12, 28, 17, 0, tzinfo=TZ)
+    end = start + timedelta(hours=1)
+
+    # Two half-hour slots @ 10 p/kWh
+    merged = [
+        RateSlot(start=start, price_p_per_kwh=10.0),
+        RateSlot(start=start + timedelta(minutes=30), price_p_per_kwh=10.0),
+    ]
+
+    # Charger 7kW -> per 30 mins = 3.5 kWh
+    # cost = 10 * 3.5 * 2 = 70.0
+    cost = _estimate_cost_for_window(merged, start, end, charger_power_kw=7.0)
+    assert cost == pytest.approx(70.0)
+
+
+def test_estimate_cost_for_window_missing_rate_returns_none():
+    start = datetime(2025, 12, 28, 17, 0, tzinfo=TZ)
+    end = start + timedelta(hours=1)
+
+    # Missing the 17:30 slot
+    merged = [
+        RateSlot(start=start, price_p_per_kwh=10.0),
+    ]
+
+    cost = _estimate_cost_for_window(merged, start, end, charger_power_kw=7.0)
+    assert cost is None
+
+
+def test_estimate_cost_for_window_zero_power_returns_zero():
+    start = datetime(2025, 12, 28, 17, 0, tzinfo=TZ)
+    end = start + timedelta(hours=1)
+
+    merged = [
+        RateSlot(start=start, price_p_per_kwh=10.0),
+        RateSlot(start=start + timedelta(minutes=30), price_p_per_kwh=10.0),
+    ]
+
+    cost = _estimate_cost_for_window(merged, start, end, charger_power_kw=0.0)
+    assert cost == 0.0
+
+
+def test_metrics_populates_tonight_cost_and_slots_when_plug_in_required_charge():
+    """
+    Mirrors the classic "needs exactly 2 hours" scenario:
+    - 4 half-hour slots planned
+    - cheap window prices make expected cost deterministic
+    """
+    now = datetime(2025, 12, 28, 18, 0, tzinfo=TZ)
+    slots = make_overnight_slots("2025-12-28", default_price=50.0)
+
+    cheap_start = datetime(2025, 12, 28, 23, 0, tzinfo=TZ)
+    cheap_end = datetime(2025, 12, 29, 1, 0, tzinfo=TZ)  # 2h -> 4 slots
+
+    slots = [
+        RateSlot(s.start, 5.0 if cheap_start <= s.start < cheap_end else s.price_p_per_kwh)
+        for s in slots
+    ]
+
+    inputs = base_inputs(
+        now,
+        current_soc_pct=42.0,
+        daily_usage_pct=10.0,
+        min_morning_soc_pct=45.0,
+        soc_buffer_pct=5.0,
+        battery_capacity_kwh=70.0,
+        charger_power_kw=7.0,
+        target_soc_pct=50.0,
+    )
+
+    out = plan_charging([], slots, inputs)
+
+    assert out.tonight.state == "PLUG_IN"
+    assert out.tonight.start == cheap_start
+    assert out.tonight.end == cheap_end
+    assert out.metrics.tonight_planned_slots == 4
+
+    # Expected cost:
+    # per slot kWh = 7kW * 0.5h = 3.5kWh
+    # total kWh = 3.5 * 4 = 14kWh
+    # price = 5 p/kWh -> total = 5 * 14 = 70 pence-units
+    assert out.metrics.tonight_estimated_cost == pytest.approx(70.0)
+
+
+def test_metrics_are_zero_none_when_not_plugging_in():
+    """
+    Ensure metrics doesn't claim slots/cost if we don't plan a PLUG_IN tonight.
+    Force NO_NEED by making a future night cheaper than tonight for opportunistic logic.
+    """
+    now = datetime(2025, 12, 28, 18, 0, tzinfo=TZ)
+
+    # Build 2 nights
+    all_slots: list[RateSlot] = []
+    for i in range(2):
+        d = (now.date() + timedelta(days=i)).isoformat()
+        all_slots.extend(make_overnight_slots(d, default_price=40.0))
+
+    # Make tomorrow night have a uniquely cheap 1h window so tonight is NOT cheapest.
+    cheap_start = datetime(2025, 12, 29, 21, 0, tzinfo=TZ)
+    cheap_end = datetime(2025, 12, 29, 22, 0, tzinfo=TZ)
+
+    all_slots = [
+        RateSlot(s.start, 1.0 if cheap_start <= s.start < cheap_end else s.price_p_per_kwh)
+        for s in all_slots
+    ]
+
+    # Above floor and target, so no required charge
+    inputs = base_inputs(
+        now,
+        current_soc_pct=80.0,
+        daily_usage_pct=10.0,
+        min_morning_soc_pct=45.0,
+        soc_buffer_pct=5.0,
+        target_soc_pct=50.0,
+    )
+
+    out = plan_charging([], all_slots, inputs)
+
+    assert out.tonight.state != "PLUG_IN"
+    assert out.metrics.tonight_planned_slots == 0
+    assert out.metrics.tonight_estimated_cost is None
