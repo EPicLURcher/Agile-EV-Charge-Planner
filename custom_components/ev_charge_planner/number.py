@@ -17,7 +17,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     async_add_entities(
         [
             _PctNumber(entry, OPT_DAILY_USAGE_PCT, "Daily usage"),
-            _PctNumber(entry, OPT_TARGET_SOC, "Full tomorrow target"),
+            _PctNumber(entry, OPT_TARGET_SOC, "SOC Target"),
         ]
     )
 

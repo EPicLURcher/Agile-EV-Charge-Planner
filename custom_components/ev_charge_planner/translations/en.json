@@ -6,8 +6,8 @@
         "description": "Configure charging for one electric vehicle using confirmed day-ahead electricity rates and a longer-term forecast. Confirmed rates always override forecast prices.",
         "data": {
           "name": "Vehicle name",
-          "confirmed_current_entity": "Confirmed rates — current day",
-          "confirmed_next_entity": "Confirmed rates — next day",
+          "confirmed_current_entity": "Current day rates",
+          "confirmed_next_entity": "Next day rates",
           "forecast_rates_entity": "Forecast rates (7-day predictor)",
           "current_soc_entity": "Current state of vehicle charge sensor (%)",
           "daily_usage_entity": "Daily usage (% per day)",
