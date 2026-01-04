@@ -1,10 +1,9 @@
-
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta, time
 from typing import Iterable, List, Optional, Dict, Tuple
+
 from ..const import DEFAULT_CHARGING_EFFICIENCY
 
 
@@ -52,13 +51,15 @@ class DeadlineStatus:
     status: str  # ON_TRACK | AT_RISK | DISABLED
     summary: str
 
+
 @dataclass(frozen=True)
 class ChargeMetrics:
-    needed_soc_pct: float          # % to add
+    needed_soc_pct: float  # % to add
     needed_energy_kwh: float
-    needed_hours: float
+    needed_hours: float  # rounded to 0.5h increments to match slots
     needed_slots: int
     effective_target_soc_pct: float
+
 
 @dataclass(frozen=True)
 class PlannerOutputs:
@@ -66,6 +67,7 @@ class PlannerOutputs:
     next_charge: Optional[TonightPlan]
     deadline: DeadlineStatus
     metrics: ChargeMetrics
+
 
 def _is_tz_aware(dt: datetime) -> bool:
     return dt.tzinfo is not None and dt.utcoffset() is not None
@@ -144,8 +146,7 @@ def _energy_kwh_from_soc_pct(battery_kwh: float, soc_pct: float) -> float:
 
 def _required_soc_for_tomorrow(inputs: PlannerInputs) -> float:
     floor = inputs.min_morning_soc_pct + inputs.soc_buffer_pct
-    target = inputs.target_soc_pct
-    return max(floor, target)
+    return max(floor, inputs.target_soc_pct)
 
 
 def _projected_soc_tomorrow_morning(inputs: PlannerInputs) -> float:
@@ -162,16 +163,28 @@ def _needed_energy_kwh(inputs: PlannerInputs, needed_soc_pct: float) -> float:
     return _energy_kwh_from_soc_pct(inputs.battery_capacity_kwh, needed_soc_pct)
 
 
-def _slots_needed_for_energy(inputs: PlannerInputs, energy_kwh: float) -> int:
-    hours = _hours_needed_for_energy(inputs, energy_kwh)
-    return _ceil_slots(hours, 0.5)
-
-def _hours_needed_for_energy(inputs: PlannerInputs, energy_kwh: float, efficiency: float = DEFAULT_CHARGING_EFFICIENCY) -> float:
+def _hours_needed_for_energy(
+    inputs: PlannerInputs,
+    energy_kwh: float,
+    efficiency: float = DEFAULT_CHARGING_EFFICIENCY,
+) -> float:
+    """Raw hours needed (no rounding)."""
     if inputs.charger_power_kw <= 0:
         return 0.0
     wall_kwh = energy_kwh / efficiency
-    raw_hours = wall_kwh / inputs.charger_power_kw
-    return math.ceil(raw_hours * 2) / 2
+    return wall_kwh / inputs.charger_power_kw
+
+
+def _slots_needed_for_energy(inputs: PlannerInputs, energy_kwh: float) -> int:
+    """Slots needed (ceil to 30-min blocks)."""
+    hours = _hours_needed_for_energy(inputs, energy_kwh)
+    return _ceil_slots(hours, 0.5)
+
+
+def _hours_needed_rounded_to_slots(inputs: PlannerInputs, energy_kwh: float) -> float:
+    """Hours that always matches the slot plan (x.0 or x.5)."""
+    return _slots_needed_for_energy(inputs, energy_kwh) * 0.5
+
 
 def _build_night_windows(now: datetime, days: int) -> List[Tuple[datetime, datetime, datetime]]:
     windows: List[Tuple[datetime, datetime, datetime]] = []
@@ -197,9 +210,10 @@ def plan_charging(
     needed_soc = _needed_charge_soc_pct_for_tomorrow(inputs)
     floor = inputs.min_morning_soc_pct + inputs.soc_buffer_pct
     effective_target = max(floor, inputs.target_soc_pct)
+
     needed_kwh = _needed_energy_kwh(inputs, needed_soc)
     needed_slots = _slots_needed_for_energy(inputs, needed_kwh)
-    needed_hours = _hours_needed_for_energy(inputs, needed_kwh)
+    needed_hours = _hours_needed_rounded_to_slots(inputs, needed_kwh)
 
     metrics = ChargeMetrics(
         needed_soc_pct=needed_soc,
@@ -208,6 +222,7 @@ def plan_charging(
         needed_slots=needed_slots,
         effective_target_soc_pct=effective_target,
     )
+
     horizon_nights = 7
     windows = _build_night_windows(inputs.now, horizon_nights)
 
@@ -216,14 +231,16 @@ def plan_charging(
     if len(merged) == 0:
         tonight = TonightPlan(
             state="NO_DATA",
-            start=None, end=None, duration_hours=0.0,
-            reason="No rate data available (confirmed or forecast)."
+            start=None,
+            end=None,
+            duration_hours=0.0,
+            reason="No rate data available (confirmed or forecast).",
         )
         return PlannerOutputs(
             tonight=tonight,
             next_charge=None,
             deadline=DeadlineStatus(status="DISABLED", summary="Deadline mode disabled."),
-            metrics=metrics
+            metrics=metrics,
         )
 
     night_slots: Dict[datetime, List[RateSlot]] = {}
@@ -266,9 +283,9 @@ def plan_charging(
         if not eligible_windows:
             return DeadlineStatus(status="AT_RISK", summary="No eligible nights before deadline.")
 
-        needed_soc = max(0.0, inputs.deadline_target_soc_pct - inputs.current_soc_pct)
-        needed_kwh = _needed_energy_kwh(inputs, needed_soc)
-        total_needed_slots = _slots_needed_for_energy(inputs, needed_kwh)
+        needed_soc_deadline = max(0.0, inputs.deadline_target_soc_pct - inputs.current_soc_pct)
+        needed_kwh_deadline = _needed_energy_kwh(inputs, needed_soc_deadline)
+        total_needed_slots = _slots_needed_for_energy(inputs, needed_kwh_deadline)
 
         if total_needed_slots == 0:
             return DeadlineStatus(status="ON_TRACK", summary="Already at or above deadline target SoC.")
@@ -299,11 +316,13 @@ def plan_charging(
                 break
             if nid in used_nights:
                 continue
+
             take = min(s_needed, remaining)
             slots = night_slots.get(nid, [])
             res = _contiguous_block_cheapest(slots, take)
             if res is None:
                 continue
+
             s2, e2, _ = res
             deadline_plan_blocks[nid] = (s2, e2, take)
             used_nights.add(nid)
@@ -320,22 +339,19 @@ def plan_charging(
 
     if tonight_id in deadline_plan_blocks:
         s, e, slots = deadline_plan_blocks[tonight_id]
-        hrs = slots * 0.5
         tonight = TonightPlan(
             state="PLUG_IN",
-            start=s, end=e,
-            duration_hours=hrs,
+            start=s,
+            end=e,
+            duration_hours=slots * 0.5,
             reason="Deadline mode: charging scheduled tonight as part of full-by plan.",
         )
     else:
-        needed_soc = metrics.needed_soc_pct
-        needed_kwh = metrics.needed_energy_kwh
-        needed_slots = metrics.needed_slots
-
         if not tonight_slots:
             tonight = TonightPlan(
                 state="NO_DATA",
-                start=None, end=None,
+                start=None,
+                end=None,
                 duration_hours=0.0,
                 reason="No rate coverage in tonight's plug window (17:00–07:00).",
             )
@@ -344,7 +360,8 @@ def plan_charging(
             if res is None:
                 tonight = TonightPlan(
                     state="AT_RISK",
-                    start=None, end=None,
+                    start=None,
+                    end=None,
                     duration_hours=0.0,
                     reason="Not enough contiguous rate slots tonight to meet required target.",
                 )
@@ -352,7 +369,8 @@ def plan_charging(
                 s, e, _avg = res
                 tonight = TonightPlan(
                     state="PLUG_IN",
-                    start=s, end=e,
+                    start=s,
+                    end=e,
                     duration_hours=needed_slots * 0.5,
                     reason="Charge required to meet tomorrow's SoC target.",
                 )
@@ -372,7 +390,8 @@ def plan_charging(
             if not best_by_night:
                 tonight = TonightPlan(
                     state="NO_NEED",
-                    start=None, end=None,
+                    start=None,
+                    end=None,
                     duration_hours=0.0,
                     reason="Above morning floor; no opportunistic data for next 7 nights.",
                 )
@@ -382,14 +401,16 @@ def plan_charging(
                 if best_nid == tonight_id:
                     tonight = TonightPlan(
                         state="PLUG_IN",
-                        start=best_s, end=best_e,
+                        start=best_s,
+                        end=best_e,
                         duration_hours=1.0,
                         reason="Opportunistic: tonight has the cheapest 1-hour window across next 7 nights.",
                     )
                 else:
                     tonight = TonightPlan(
                         state="NO_NEED",
-                        start=None, end=None,
+                        start=None,
+                        end=None,
                         duration_hours=0.0,
                         reason="Above morning floor; tonight is not the cheapest 1-hour window in next 7 nights.",
                     )
@@ -402,7 +423,8 @@ def plan_charging(
             s, e, slots = deadline_plan_blocks[nid]
             next_charge = TonightPlan(
                 state="PLUG_IN",
-                start=s, end=e,
+                start=s,
+                end=e,
                 duration_hours=slots * 0.5,
                 reason="Next scheduled charge from deadline plan.",
             )
